@@ -4,6 +4,7 @@ obj/
 .idea/
 .vscode/
 .dotnet-cli/
+artifacts/
 *.user
 *.suo
 

@@ -9,186 +9,208 @@ namespace EcountManager.ViewModels;
 
 public sealed class MainWindowViewModel : ViewModelBase
 {
-    private readonly IEcountQueryService _queryService;
-    private Customer? _selectedCustomer;
-    private CustomerDashboard? _dashboard;
-    private string _customerSearchText = string.Empty;
-    private string _saleSearchText = string.Empty;
-    private string _inventorySearchText = string.Empty;
-    private string _statusMessage = "고객을 선택해 주세요.";
-    private bool _isLoading;
-    private int _selectedTabIndex;
+    private readonly IEcountApiClient _apiClient;
+    private EcountSession? _session;
+    private string _companyCode = string.Empty;
+    private string _userId = string.Empty;
+    private string _apiCertificateKey = string.Empty;
+    private string _searchText = string.Empty;
+    private string _connectionStatus = "연결 정보를 입력해 주세요.";
+    private string _zone = "-";
+    private bool _useTestServer = true;
+    private bool _isBusy;
+    private DateTimeOffset? _lastSyncedAt;
 
-    public MainWindowViewModel(IEcountQueryService queryService)
+    public MainWindowViewModel(IEcountApiClient apiClient)
     {
-        _queryService = queryService;
-        CustomersView = CollectionViewSource.GetDefaultView(Customers);
-        SalesView = CollectionViewSource.GetDefaultView(Sales);
-        InventoryView = CollectionViewSource.GetDefaultView(Inventory);
-        ReceivablesView = CollectionViewSource.GetDefaultView(Receivables);
-        SalesView.Filter = FilterSale;
-        InventoryView.Filter = FilterInventory;
-
-        RefreshCommand = new RelayCommand(() => _ = RefreshAsync(), () => SelectedCustomer is not null && !IsLoading);
-        OpenInventoryTabCommand = new RelayCommand(() => SelectedTabIndex = 1);
-        _ = InitializeAsync();
+        _apiClient = apiClient;
+        ProductsView = CollectionViewSource.GetDefaultView(Products);
+        WarehouseStocksView = CollectionViewSource.GetDefaultView(WarehouseStocks);
+        ProductsView.Filter = FilterProduct;
+        WarehouseStocksView.Filter = FilterWarehouseStock;
+        ConnectCommand = new AsyncRelayCommand(ConnectAndSyncAsync, CanConnect);
+        RefreshCommand = new AsyncRelayCommand(SyncAsync, () => _session is not null && !IsBusy);
     }
 
-    public ObservableCollection<Customer> Customers { get; } = [];
-    public ObservableCollection<SaleRecord> Sales { get; } = [];
-    public ObservableCollection<InventoryItem> Inventory { get; } = [];
-    public ObservableCollection<ReceivableRecord> Receivables { get; } = [];
-    public ICollectionView CustomersView { get; }
-    public ICollectionView SalesView { get; }
-    public ICollectionView InventoryView { get; }
-    public ICollectionView ReceivablesView { get; }
+    public ObservableCollection<EcountProduct> Products { get; } = [];
+    public ObservableCollection<EcountWarehouseStock> WarehouseStocks { get; } = [];
+    public ICollectionView ProductsView { get; }
+    public ICollectionView WarehouseStocksView { get; }
+    public ICommand ConnectCommand { get; }
     public ICommand RefreshCommand { get; }
-    public ICommand OpenInventoryTabCommand { get; }
 
-    public Customer? SelectedCustomer
+    public string CompanyCode
     {
-        get => _selectedCustomer;
+        get => _companyCode;
+        set { if (SetProperty(ref _companyCode, value)) RaiseCommandStates(); }
+    }
+
+    public string UserId
+    {
+        get => _userId;
+        set { if (SetProperty(ref _userId, value)) RaiseCommandStates(); }
+    }
+
+    public string ApiCertificateKey
+    {
+        get => _apiCertificateKey;
+        set { if (SetProperty(ref _apiCertificateKey, value)) RaiseCommandStates(); }
+    }
+
+    public bool UseTestServer
+    {
+        get => _useTestServer;
+        set => SetProperty(ref _useTestServer, value);
+    }
+
+    public string SearchText
+    {
+        get => _searchText;
         set
         {
-            if (SetProperty(ref _selectedCustomer, value) && value is not null)
+            if (SetProperty(ref _searchText, value))
             {
-                ((RelayCommand)RefreshCommand).RaiseCanExecuteChanged();
-                _ = LoadDashboardAsync(value.Code);
+                ProductsView.Refresh();
+                WarehouseStocksView.Refresh();
             }
         }
     }
 
-    public CustomerDashboard? Dashboard
+    public string ConnectionStatus
     {
-        get => _dashboard;
-        private set => SetProperty(ref _dashboard, value);
+        get => _connectionStatus;
+        private set => SetProperty(ref _connectionStatus, value);
     }
 
-    public string CustomerSearchText
+    public string Zone
     {
-        get => _customerSearchText;
-        set
-        {
-            if (SetProperty(ref _customerSearchText, value)) _ = SearchCustomersAsync(value);
-        }
+        get => _zone;
+        private set => SetProperty(ref _zone, value);
     }
 
-    public string SaleSearchText
+    public bool IsBusy
     {
-        get => _saleSearchText;
-        set
-        {
-            if (SetProperty(ref _saleSearchText, value)) SalesView.Refresh();
-        }
-    }
-
-    public string InventorySearchText
-    {
-        get => _inventorySearchText;
-        set
-        {
-            if (SetProperty(ref _inventorySearchText, value)) InventoryView.Refresh();
-        }
-    }
-
-    public string StatusMessage
-    {
-        get => _statusMessage;
-        private set => SetProperty(ref _statusMessage, value);
-    }
-
-    public bool IsLoading
-    {
-        get => _isLoading;
+        get => _isBusy;
         private set
         {
-            if (SetProperty(ref _isLoading, value)) ((RelayCommand)RefreshCommand).RaiseCanExecuteChanged();
+            if (SetProperty(ref _isBusy, value)) RaiseCommandStates();
         }
     }
 
-    public int SelectedTabIndex
+    public DateTimeOffset? LastSyncedAt
     {
-        get => _selectedTabIndex;
-        set => SetProperty(ref _selectedTabIndex, value);
+        get => _lastSyncedAt;
+        private set => SetProperty(ref _lastSyncedAt, value);
     }
 
-    private async Task InitializeAsync()
-    {
-        await SearchCustomersAsync(null);
-        SelectedCustomer = Customers.FirstOrDefault();
-    }
+    public int ProductCount => Products.Count;
+    public int WarehouseStockCount => WarehouseStocks.Count;
+    public decimal TotalStock => Products.Sum(product => product.CurrentStock);
+    public string ServerMode => UseTestServer ? "테스트 서버" : "운영 서버";
 
-    private async Task SearchCustomersAsync(string? searchText)
+    private bool CanConnect() =>
+        !IsBusy &&
+        !string.IsNullOrWhiteSpace(CompanyCode) &&
+        !string.IsNullOrWhiteSpace(UserId) &&
+        !string.IsNullOrWhiteSpace(ApiCertificateKey);
+
+    private async Task ConnectAndSyncAsync()
     {
         try
         {
-            var selectedCode = SelectedCustomer?.Code;
-            var results = await _queryService.SearchCustomersAsync(searchText);
-            Customers.Clear();
-            foreach (var customer in results) Customers.Add(customer);
-
-            if (selectedCode is not null)
-            {
-                _selectedCustomer = Customers.FirstOrDefault(x => x.Code == selectedCode);
-                OnPropertyChanged(nameof(SelectedCustomer));
-            }
+            IsBusy = true;
+            ConnectionStatus = "Zone 조회 및 로그인 중...";
+            var settings = new EcountConnectionSettings(
+                CompanyCode.Trim(),
+                UserId.Trim(),
+                ApiCertificateKey,
+                UseTestServer);
+            _session = await _apiClient.ConnectAsync(settings);
+            Zone = _session.Zone;
+            OnPropertyChanged(nameof(ServerMode));
+            await SyncCoreAsync();
         }
         catch (Exception ex)
         {
-            StatusMessage = $"고객 검색 실패: {ex.Message}";
-        }
-    }
-
-    private async Task RefreshAsync()
-    {
-        if (SelectedCustomer is not null) await LoadDashboardAsync(SelectedCustomer.Code);
-    }
-
-    private async Task LoadDashboardAsync(string customerCode)
-    {
-        try
-        {
-            IsLoading = true;
-            StatusMessage = "Ecount 조회 데이터를 불러오는 중입니다...";
-            var dashboard = await _queryService.GetCustomerDashboardAsync(customerCode);
-            if (SelectedCustomer?.Code != customerCode) return;
-
-            Dashboard = dashboard;
-            ReplaceItems(Sales, dashboard.Sales);
-            ReplaceItems(Inventory, dashboard.Inventory);
-            ReplaceItems(Receivables, dashboard.Receivables);
-            StatusMessage = $"{dashboard.Customer.Name} 조회 완료 · {DateTime.Now:HH:mm:ss}";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"데이터 조회 실패: {ex.Message}";
+            _session = null;
+            ConnectionStatus = $"연결 실패: {ex.Message}";
         }
         finally
         {
-            IsLoading = false;
+            IsBusy = false;
         }
     }
 
-    private bool FilterSale(object item)
+    private async Task SyncAsync()
     {
-        if (item is not SaleRecord sale || string.IsNullOrWhiteSpace(SaleSearchText)) return true;
-        var term = SaleSearchText.Trim();
-        return sale.ItemName.Contains(term, StringComparison.CurrentCultureIgnoreCase)
-            || sale.ItemCode.Contains(term, StringComparison.OrdinalIgnoreCase)
-            || sale.Specification.Contains(term, StringComparison.CurrentCultureIgnoreCase)
-            || sale.EnteredBy.Contains(term, StringComparison.CurrentCultureIgnoreCase)
-            || sale.SlipNumber.Contains(term, StringComparison.OrdinalIgnoreCase)
-            || sale.TotalAmount.ToString("N0").Contains(term, StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            IsBusy = true;
+            await SyncCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"동기화 실패: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
-    private bool FilterInventory(object item)
+    private async Task SyncCoreAsync()
     {
-        if (item is not InventoryItem inventoryItem || string.IsNullOrWhiteSpace(InventorySearchText)) return true;
-        var term = InventorySearchText.Trim();
-        return inventoryItem.ItemName.Contains(term, StringComparison.CurrentCultureIgnoreCase)
-            || inventoryItem.ItemCode.Contains(term, StringComparison.OrdinalIgnoreCase)
-            || inventoryItem.Specification.Contains(term, StringComparison.CurrentCultureIgnoreCase)
-            || inventoryItem.StandardPrice.ToString("N0").Contains(term, StringComparison.OrdinalIgnoreCase);
+        if (_session is null) return;
+        var baseDate = DateOnly.FromDateTime(DateTime.Today);
+
+        ConnectionStatus = "품목 정보를 불러오는 중...";
+        var products = await _apiClient.GetProductsAsync(_session);
+        ConnectionStatus = "재고 현황을 불러오는 중...";
+        var inventory = await _apiClient.GetInventoryAsync(_session, baseDate);
+        foreach (var product in products)
+        {
+            if (inventory.TryGetValue(product.Code, out var quantity)) product.CurrentStock = quantity;
+        }
+
+        ConnectionStatus = "창고별 재고를 불러오는 중...";
+        var warehouseStocks = await _apiClient.GetWarehouseInventoryAsync(_session, baseDate);
+        ReplaceItems(Products, products);
+        ReplaceItems(WarehouseStocks, warehouseStocks);
+        LastSyncedAt = DateTimeOffset.Now;
+        NotifySummary();
+        ConnectionStatus = $"Ecount 연결 완료 · {products.Count:N0}개 품목";
+    }
+
+    private bool FilterProduct(object item)
+    {
+        if (item is not EcountProduct product || string.IsNullOrWhiteSpace(SearchText)) return true;
+        var term = SearchText.Trim();
+        return product.Code.Contains(term, StringComparison.OrdinalIgnoreCase)
+            || product.Name.Contains(term, StringComparison.CurrentCultureIgnoreCase)
+            || product.Specification.Contains(term, StringComparison.CurrentCultureIgnoreCase)
+            || product.Barcode.Contains(term, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool FilterWarehouseStock(object item)
+    {
+        if (item is not EcountWarehouseStock stock || string.IsNullOrWhiteSpace(SearchText)) return true;
+        var term = SearchText.Trim();
+        return stock.ProductCode.Contains(term, StringComparison.OrdinalIgnoreCase)
+            || stock.ProductName.Contains(term, StringComparison.CurrentCultureIgnoreCase)
+            || stock.WarehouseName.Contains(term, StringComparison.CurrentCultureIgnoreCase);
+    }
+
+    private void RaiseCommandStates()
+    {
+        ((AsyncRelayCommand)ConnectCommand).RaiseCanExecuteChanged();
+        ((AsyncRelayCommand)RefreshCommand).RaiseCanExecuteChanged();
+    }
+
+    private void NotifySummary()
+    {
+        OnPropertyChanged(nameof(ProductCount));
+        OnPropertyChanged(nameof(WarehouseStockCount));
+        OnPropertyChanged(nameof(TotalStock));
     }
 
     private static void ReplaceItems<T>(ObservableCollection<T> collection, IEnumerable<T> items)

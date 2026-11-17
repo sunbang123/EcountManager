@@ -1,0 +1,95 @@
+<Window x:Class="EcountManager.MemoWidgetWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="상담 메모" Icon="Assets/EcountManager.ico"
+        Width="420" Height="690" MinWidth="360" MinHeight="560"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ResizeMode="CanResizeWithGrip" Topmost="True" ShowInTaskbar="True"
+        WindowStartupLocation="CenterScreen">
+    <Border Background="#FFFDF8" BorderBrush="#F5B041" BorderThickness="2" CornerRadius="18">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="64"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Border Background="#F79009" CornerRadius="15,15,0,0" MouseLeftButtonDown="Header_OnMouseLeftButtonDown">
+                <Grid Margin="18,0,10,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border Width="34" Height="34" Background="#FFF3D6" CornerRadius="17" Margin="0,0,10,0">
+                            <TextBlock Text="✎" FontSize="19" Foreground="#B54708" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <StackPanel>
+                            <TextBlock Text="상담 메모 친구" Foreground="White" FontSize="15" FontWeight="Bold"/>
+                            <TextBlock Text="화면 위에 항상 함께 있어요" Foreground="#FFF0CF" FontSize="10"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="—" Click="Hide_OnClick" Width="32" Height="30" Padding="0" Background="Transparent" FontSize="16"/>
+                    <Button Grid.Column="2" Content="×" Click="Close_OnClick" Width="32" Height="30" Padding="0" Background="Transparent" FontSize="18"/>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1" Margin="14,14,14,8" Background="White" BorderBrush="#F2E3C5" BorderThickness="1" CornerRadius="10" Padding="12">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,5,0">
+                            <TextBlock Text="상호명 *" Foreground="#7A5B2E" FontSize="10" Margin="1,0,0,4"/>
+                            <TextBox Text="{Binding BusinessName, UpdateSourceTrigger=PropertyChanged}" Padding="9,7"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="5,0,0,0">
+                            <TextBlock Text="전화번호" Foreground="#7A5B2E" FontSize="10" Margin="1,0,0,4"/>
+                            <TextBox Text="{Binding PhoneNumber, UpdateSourceTrigger=PropertyChanged}" Padding="9,7"/>
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="문의내용 *" Foreground="#7A5B2E" FontSize="10" Margin="1,0,0,4"/>
+                    <TextBox Text="{Binding Inquiry, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap"
+                             Height="82" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" Padding="9,7"/>
+                    <Grid Margin="0,9,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                        <Button Content="새 메모" Command="{Binding NewCommand}" Background="#7A8799" Margin="0,0,5,0" Padding="10,7"/>
+                        <Button Grid.Column="1" Content="저장" Command="{Binding SaveCommand}" Margin="5,0,0,0" Padding="10,7"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Grid Grid.Row="2" Margin="14,4,14,8">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <TextBlock Text="생성시간순 상담 목록" FontSize="12" FontWeight="Bold" Foreground="#5A4527" Margin="2,0,0,7"/>
+                <ListBox Grid.Row="1" ItemsSource="{Binding Memos}" SelectedItem="{Binding SelectedMemo}"
+                         BorderBrush="#F2E3C5" Background="#FFFCF5" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="5,3"/>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="White" BorderBrush="#F2E3C5" BorderThickness="0,0,0,1" Padding="10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding BusinessName}" FontWeight="Bold" FontSize="13" Foreground="#3E3425"/>
+                                        <TextBlock Text="{Binding PhoneNumber}" FontSize="10" Foreground="#8A7453" Margin="0,2,0,0"/>
+                                        <TextBlock Text="{Binding Inquiry}" FontSize="11" Foreground="#5F5545" Margin="0,5,12,0"
+                                                   TextTrimming="CharacterEllipsis" MaxHeight="36" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding CreatedAt, StringFormat={}{0:MM-dd HH:mm}}" FontSize="10" Foreground="#A88A59"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+
+            <Border Grid.Row="3" Background="#FFF5DD" CornerRadius="0,0,15,15" Padding="14,9">
+                <TextBlock Text="{Binding StatusMessage}" Foreground="#7A5B2E" FontSize="10" TextWrapping="Wrap"/>
+            </Border>
+        </Grid>
+    </Border>
+</Window>
