@@ -53,12 +53,15 @@ public sealed class EcountApiClient(HttpClient httpClient) : IEcountApiClient
         return new(zone, sessionId, settings.UseTestServer, DateTimeOffset.Now);
     }
 
-    public async Task<IReadOnlyList<EcountProduct>> GetProductsAsync(EcountSession session, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<EcountProduct>> GetProductsAsync(
+        EcountSession session,
+        string productCode,
+        CancellationToken cancellationToken = default)
     {
         using var document = await PostSessionAsync(
             session,
             ProductsPath,
-            new { PROD_TYPE = string.Empty, FROM_PROD_CD = string.Empty, TO_PROD_CD = string.Empty },
+            new { PROD_TYPE = string.Empty, FROM_PROD_CD = productCode, TO_PROD_CD = productCode },
             cancellationToken);
 
         var records = FindRecordObjects(document.RootElement, "PROD_CD");
@@ -71,6 +74,8 @@ public sealed class EcountApiClient(HttpClient httpClient) : IEcountApiClient
                 Unit = GetString(record, "UNIT"),
                 ProductType = GetString(record, "PROD_TYPE"),
                 Barcode = GetString(record, "BAR_CODE"),
+                GroupCode = GetString(record, "CLASS_CD"),
+                GroupName = FirstNonEmpty(record, "CLASS_DES", "CLASS_NM", "CLASS_NAME"),
                 PurchasePrice = GetDecimal(record, "IN_PRICE"),
                 SalesPrice = GetDecimal(record, "OUT_PRICE"),
                 TaxRate = GetDecimal(record, "TAX")
@@ -85,12 +90,13 @@ public sealed class EcountApiClient(HttpClient httpClient) : IEcountApiClient
     public async Task<IReadOnlyDictionary<string, decimal>> GetInventoryAsync(
         EcountSession session,
         DateOnly baseDate,
+        string productCode,
         CancellationToken cancellationToken = default)
     {
         using var document = await PostSessionAsync(
             session,
             InventoryPath,
-            new { BASE_DATE = baseDate.ToString("yyyyMMdd", CultureInfo.InvariantCulture), PROD_CD = string.Empty },
+            new { BASE_DATE = baseDate.ToString("yyyyMMdd", CultureInfo.InvariantCulture), PROD_CD = productCode },
             cancellationToken);
 
         return FindRecordObjects(document.RootElement, "PROD_CD")
@@ -103,6 +109,7 @@ public sealed class EcountApiClient(HttpClient httpClient) : IEcountApiClient
     public async Task<IReadOnlyList<EcountWarehouseStock>> GetWarehouseInventoryAsync(
         EcountSession session,
         DateOnly baseDate,
+        string productCode,
         CancellationToken cancellationToken = default)
     {
         using var document = await PostSessionAsync(
@@ -111,7 +118,7 @@ public sealed class EcountApiClient(HttpClient httpClient) : IEcountApiClient
             new
             {
                 BASE_DATE = baseDate.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
-                PROD_CD = string.Empty,
+                PROD_CD = productCode,
                 WH_CD = string.Empty
             },
             cancellationToken);
@@ -254,5 +261,16 @@ public sealed class EcountApiClient(HttpClient httpClient) : IEcountApiClient
         if (!element.TryGetProperty(propertyName, out var value)) return 0;
         if (value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var number)) return number;
         return decimal.TryParse(value.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out number) ? number : 0;
+    }
+
+    private static string FirstNonEmpty(JsonElement element, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            var value = GetString(element, propertyName);
+            if (!string.IsNullOrWhiteSpace(value)) return value;
+        }
+
+        return string.Empty;
     }
 }

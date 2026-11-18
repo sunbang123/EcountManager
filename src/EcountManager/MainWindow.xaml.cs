@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using EcountManager.Services;
 using EcountManager.ViewModels;
 
@@ -9,7 +10,6 @@ namespace EcountManager;
 public partial class MainWindow : Window
 {
     private static readonly HttpClient HttpClient = new() { Timeout = TimeSpan.FromSeconds(30) };
-    private MemoWidgetWindow? _memoWidget;
 
     public MainWindow()
     {
@@ -26,18 +26,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OpenMemoWidget_OnClick(object sender, RoutedEventArgs e)
+    private void WindowHeader_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (_memoWidget is null)
-        {
-            _memoWidget = new MemoWidgetWindow();
-            _memoWidget.Closed += (_, _) => _memoWidget = null;
-            _memoWidget.Show();
-        }
-        else
-        {
-            _memoWidget.Show();
-            _memoWidget.Activate();
-        }
+        if (e.ButtonState == MouseButtonState.Pressed) DragMove();
     }
+
 }

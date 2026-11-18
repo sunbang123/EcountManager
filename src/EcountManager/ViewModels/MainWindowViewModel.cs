@@ -9,6 +9,7 @@ namespace EcountManager.ViewModels;
 
 public sealed class MainWindowViewModel : ViewModelBase
 {
+    private const string AllGroups = "전체 그룹";
     private readonly IEcountApiClient _apiClient;
     private EcountSession? _session;
     private string _companyCode = string.Empty;
@@ -20,6 +21,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _useTestServer = true;
     private bool _isBusy;
     private DateTimeOffset? _lastSyncedAt;
+    private string? _lastSearchCode;
+    private string _selectedGroup = AllGroups;
 
     public MainWindowViewModel(IEcountApiClient apiClient)
     {
@@ -28,15 +31,18 @@ public sealed class MainWindowViewModel : ViewModelBase
         WarehouseStocksView = CollectionViewSource.GetDefaultView(WarehouseStocks);
         ProductsView.Filter = FilterProduct;
         WarehouseStocksView.Filter = FilterWarehouseStock;
-        ConnectCommand = new AsyncRelayCommand(ConnectAndSyncAsync, CanConnect);
-        RefreshCommand = new AsyncRelayCommand(SyncAsync, () => _session is not null && !IsBusy);
+        ConnectCommand = new AsyncRelayCommand(ConnectAsync, CanConnect);
+        SearchCommand = new AsyncRelayCommand(SearchAsync, CanSearch);
+        RefreshCommand = new AsyncRelayCommand(RefreshLastSearchAsync, CanRefresh);
     }
 
     public ObservableCollection<EcountProduct> Products { get; } = [];
     public ObservableCollection<EcountWarehouseStock> WarehouseStocks { get; } = [];
+    public ObservableCollection<string> GroupOptions { get; } = [AllGroups];
     public ICollectionView ProductsView { get; }
     public ICollectionView WarehouseStocksView { get; }
     public ICommand ConnectCommand { get; }
+    public ICommand SearchCommand { get; }
     public ICommand RefreshCommand { get; }
 
     public string CompanyCode
@@ -68,11 +74,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         get => _searchText;
         set
         {
-            if (SetProperty(ref _searchText, value))
-            {
-                ProductsView.Refresh();
-                WarehouseStocksView.Refresh();
-            }
+            if (SetProperty(ref _searchText, value)) RaiseCommandStates();
         }
     }
 
@@ -80,6 +82,15 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _connectionStatus;
         private set => SetProperty(ref _connectionStatus, value);
+    }
+
+    public string SelectedGroup
+    {
+        get => _selectedGroup;
+        set
+        {
+            if (SetProperty(ref _selectedGroup, value)) ProductsView.Refresh();
+        }
     }
 
     public string Zone
@@ -114,7 +125,11 @@ public sealed class MainWindowViewModel : ViewModelBase
         !string.IsNullOrWhiteSpace(UserId) &&
         !string.IsNullOrWhiteSpace(ApiCertificateKey);
 
-    private async Task ConnectAndSyncAsync()
+    private bool CanSearch() => _session is not null && !IsBusy && !string.IsNullOrWhiteSpace(SearchText);
+
+    private bool CanRefresh() => _session is not null && !IsBusy && !string.IsNullOrWhiteSpace(_lastSearchCode);
+
+    private async Task ConnectAsync()
     {
         try
         {
@@ -128,7 +143,14 @@ public sealed class MainWindowViewModel : ViewModelBase
             _session = await _apiClient.ConnectAsync(settings);
             Zone = _session.Zone;
             OnPropertyChanged(nameof(ServerMode));
-            await SyncCoreAsync();
+            _lastSearchCode = null;
+            ReplaceItems(Products, []);
+            ReplaceItems(WarehouseStocks, []);
+            ReplaceItems(GroupOptions, [AllGroups]);
+            SelectedGroup = AllGroups;
+            LastSyncedAt = null;
+            NotifySummary();
+            ConnectionStatus = "Ecount 연결 완료 · 정확한 품목코드를 입력해 조회하세요.";
         }
         catch (Exception ex)
         {
@@ -141,16 +163,16 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
-    private async Task SyncAsync()
+    private async Task SearchAsync()
     {
         try
         {
             IsBusy = true;
-            await SyncCoreAsync();
+            await SearchCoreAsync(SearchText.Trim());
         }
         catch (Exception ex)
         {
-            ConnectionStatus = $"동기화 실패: {ex.Message}";
+            ConnectionStatus = $"품목 조회 실패: {ex.Message}";
         }
         finally
         {
@@ -158,51 +180,67 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
-    private async Task SyncCoreAsync()
+    private async Task RefreshLastSearchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_lastSearchCode)) return;
+        try
+        {
+            IsBusy = true;
+            await SearchCoreAsync(_lastSearchCode);
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"품목 재조회 실패: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task SearchCoreAsync(string productCode)
     {
         if (_session is null) return;
         var baseDate = DateOnly.FromDateTime(DateTime.Today);
 
-        ConnectionStatus = "품목 정보를 불러오는 중...";
-        var products = await _apiClient.GetProductsAsync(_session);
-        ConnectionStatus = "재고 현황을 불러오는 중...";
-        var inventory = await _apiClient.GetInventoryAsync(_session, baseDate);
+        ConnectionStatus = $"{productCode} 품목 정보를 불러오는 중...";
+        var products = await _apiClient.GetProductsAsync(_session, productCode);
+        ConnectionStatus = $"{productCode} 재고 현황을 불러오는 중...";
+        var inventory = await _apiClient.GetInventoryAsync(_session, baseDate, productCode);
         foreach (var product in products)
         {
             if (inventory.TryGetValue(product.Code, out var quantity)) product.CurrentStock = quantity;
         }
 
-        ConnectionStatus = "창고별 재고를 불러오는 중...";
-        var warehouseStocks = await _apiClient.GetWarehouseInventoryAsync(_session, baseDate);
-        ReplaceItems(Products, products);
-        ReplaceItems(WarehouseStocks, warehouseStocks);
+        ConnectionStatus = $"{productCode} 창고별 재고를 불러오는 중...";
+        var warehouseStocks = await _apiClient.GetWarehouseInventoryAsync(_session, baseDate, productCode);
+        UpsertProducts(products);
+        UpsertWarehouseStocks(warehouseStocks, productCode);
+        RefreshGroupOptions();
+        _lastSearchCode = productCode;
         LastSyncedAt = DateTimeOffset.Now;
         NotifySummary();
-        ConnectionStatus = $"Ecount 연결 완료 · {products.Count:N0}개 품목";
+        RaiseCommandStates();
+        ConnectionStatus = products.Count == 0
+            ? $"{productCode} 품목을 찾지 못했습니다. 정확한 품목코드를 확인하세요."
+            : $"{productCode} 조회 완료 · API는 검색 버튼을 누를 때만 호출됩니다.";
     }
 
     private bool FilterProduct(object item)
     {
-        if (item is not EcountProduct product || string.IsNullOrWhiteSpace(SearchText)) return true;
-        var term = SearchText.Trim();
-        return product.Code.Contains(term, StringComparison.OrdinalIgnoreCase)
-            || product.Name.Contains(term, StringComparison.CurrentCultureIgnoreCase)
-            || product.Specification.Contains(term, StringComparison.CurrentCultureIgnoreCase)
-            || product.Barcode.Contains(term, StringComparison.OrdinalIgnoreCase);
+        if (item is not EcountProduct product || SelectedGroup == AllGroups) return true;
+        return string.Equals(product.GroupDisplayName, SelectedGroup, StringComparison.CurrentCultureIgnoreCase);
     }
 
     private bool FilterWarehouseStock(object item)
     {
-        if (item is not EcountWarehouseStock stock || string.IsNullOrWhiteSpace(SearchText)) return true;
-        var term = SearchText.Trim();
-        return stock.ProductCode.Contains(term, StringComparison.OrdinalIgnoreCase)
-            || stock.ProductName.Contains(term, StringComparison.CurrentCultureIgnoreCase)
-            || stock.WarehouseName.Contains(term, StringComparison.CurrentCultureIgnoreCase);
+        return item is EcountWarehouseStock;
     }
 
     private void RaiseCommandStates()
     {
         ((AsyncRelayCommand)ConnectCommand).RaiseCanExecuteChanged();
+        ((AsyncRelayCommand)SearchCommand).RaiseCanExecuteChanged();
         ((AsyncRelayCommand)RefreshCommand).RaiseCanExecuteChanged();
     }
 
@@ -217,5 +255,43 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         collection.Clear();
         foreach (var item in items) collection.Add(item);
+    }
+
+    private void UpsertProducts(IEnumerable<EcountProduct> products)
+    {
+        foreach (var product in products)
+        {
+            var existing = Products.FirstOrDefault(item =>
+                string.Equals(item.Code, product.Code, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null) Products.Remove(existing);
+            Products.Add(product);
+        }
+
+        ProductsView.Refresh();
+    }
+
+    private void UpsertWarehouseStocks(IEnumerable<EcountWarehouseStock> warehouseStocks, string productCode)
+    {
+        foreach (var existing in WarehouseStocks
+                     .Where(item => string.Equals(item.ProductCode, productCode, StringComparison.OrdinalIgnoreCase))
+                     .ToArray())
+        {
+            WarehouseStocks.Remove(existing);
+        }
+
+        foreach (var stock in warehouseStocks) WarehouseStocks.Add(stock);
+    }
+
+    private void RefreshGroupOptions()
+    {
+        var selected = SelectedGroup;
+        var options = Products
+            .Select(product => product.GroupDisplayName)
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(group => group, StringComparer.CurrentCultureIgnoreCase)
+            .Prepend(AllGroups)
+            .ToArray();
+        ReplaceItems(GroupOptions, options);
+        SelectedGroup = options.Contains(selected, StringComparer.CurrentCultureIgnoreCase) ? selected : AllGroups;
     }
 }

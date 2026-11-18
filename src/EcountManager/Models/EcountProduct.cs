@@ -8,10 +8,16 @@ public sealed class EcountProduct
     public string Unit { get; init; } = string.Empty;
     public string ProductType { get; init; } = string.Empty;
     public string Barcode { get; init; } = string.Empty;
+    public string GroupCode { get; init; } = string.Empty;
+    public string GroupName { get; init; } = string.Empty;
     public decimal PurchasePrice { get; init; }
     public decimal SalesPrice { get; init; }
     public decimal CurrentStock { get; set; }
     public decimal TaxRate { get; init; }
+
+    public string GroupDisplayName => string.IsNullOrWhiteSpace(GroupName)
+        ? (string.IsNullOrWhiteSpace(GroupCode) ? "그룹 미설정" : GroupCode)
+        : $"{GroupName} ({GroupCode})";
 
     public string StockStatus => CurrentStock switch
     {

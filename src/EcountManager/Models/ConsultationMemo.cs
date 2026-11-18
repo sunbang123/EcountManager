@@ -5,5 +5,8 @@ public sealed record ConsultationMemo(
     string BusinessName,
     string PhoneNumber,
     string Inquiry,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt)
+{
+    public string BusinessRegistrationNumber { get; init; } = string.Empty;
+}
 

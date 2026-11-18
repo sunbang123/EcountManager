@@ -1,7 +1,8 @@
 <Application x:Class="EcountManager.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             StartupUri="MainWindow.xaml">
+             StartupUri="RemoteControlWindow.xaml"
+             ShutdownMode="OnMainWindowClose">
     <Application.Resources>
         <SolidColorBrush x:Key="PageBackgroundBrush" Color="#F4F6F9" />
         <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
